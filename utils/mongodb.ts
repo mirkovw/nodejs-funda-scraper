@@ -1,8 +1,9 @@
+import env from "env-var";
 import isEqual from "lodash.isequal";
 import { AnyBulkWriteOperation, MongoClient, ServerApiVersion } from "mongodb";
 import { DbUpdate, Listing } from "../types/types";
 
-const uri = process.env.LOCAL_MONGO_URI as string;
+const uri = env.get("MONGO_URI").required().asString();
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -64,12 +65,15 @@ export function getChanges(
 
   localListingsById.forEach((listing, id) => {
     if (dbListingsById.has(id)) {
-      const dbListing: any = { ...dbListingsById.get(id) };
-      delete dbListing._id;
+      const dbListing: Partial<Listing> = { ...dbListingsById.get(id) };
+      delete (dbListing as any)._id;
       delete dbListing.coordinates;
       delete dbListing.elevation;
 
       if (!isEqual(dbListing, listing)) {
+        console.log("SOMETHING CHANGED");
+        console.log(dbListing);
+        console.log(listing);
         toUpdate.push(listing);
       }
     } else {
