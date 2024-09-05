@@ -1,3 +1,4 @@
+import Bottleneck from "bottleneck";
 import cheerio from "cheerio";
 import cliProgress from "cli-progress";
 import crypto from "crypto";
@@ -26,6 +27,8 @@ export async function getAllListingsFromFunda(municipalities: string[] = []) {
 
   queue.run();
 
+  const retriesPerUrlMap = new Map<string, number>();
+
   return new Promise<Listing[]>((resolve) => {
     queue.on("progress", (progress) => {
       bar.increment();
@@ -34,6 +37,16 @@ export async function getAllListingsFromFunda(municipalities: string[] = []) {
       );
 
       if (progress.result.listings.length === 0) {
+        const retryIndex = retriesPerUrlMap.get(progress.result.url) || 0;
+        retriesPerUrlMap.set(progress.result.url, retryIndex + 1);
+        if (retryIndex >= 3) {
+          multiBar.log(`reached max retries for url: ${progress.result.url}\n`);
+          return;
+        }
+
+        multiBar.log(
+          `retrying url ${progress.result.url}, attempt ${retryIndex}\n`
+        );
         queue.add([() => fetchSearchResultsPerUrl(progress.result.url)]); // TODO add limited retries
         bar.setTotal(queue.total);
       }
@@ -187,5 +200,102 @@ async function fetchSearchResultsPerUrl(url: string, isFirstPage = false) {
     url,
     listings,
     urlsToCheck,
+  };
+}
+
+export async function mapListingsToFeatureCollection(listings: Listing[]) {
+  const features = listings.map((listing) => {
+    try {
+      const postalCode =
+        listing.postalCodeCity.split(" ")[0] +
+        " " +
+        listing.postalCodeCity.split(" ")[1];
+      const city = listing.postalCodeCity.split(" ")[2];
+
+      return {
+        type: "Feature",
+        id: listing.id,
+        geometry: {
+          type: "Point",
+          coordinates: [
+            listing.coordinates.longitude,
+            listing.coordinates.latitude,
+          ],
+        },
+        properties: {
+          id: listing.id,
+          price: listing.priceSale,
+          postalCode,
+          city,
+          streetName: listing.streetName,
+          surface: listing.woonoppervlakte,
+          land: listing.perceel,
+          rooms: listing.kamers,
+          energyLabel: listing.energielabel,
+          link: listing.link,
+          elevation: listing.elevation,
+        },
+      };
+    } catch (error) {
+      console.log("error mapping listing to feature", listing.id, error);
+    }
+  });
+
+  return {
+    type: "FeatureCollection",
+    features,
+  };
+}
+
+export async function getListingDetails(listings: Listing[]) {
+  const multiBar = new cliProgress.MultiBar(
+    {},
+    cliProgress.Presets.shades_classic
+  );
+  const bar = multiBar.create(listings.length, 0);
+
+  const limiter = new Bottleneck({
+    minTime: 150,
+    maxConcurrent: 4,
+  });
+
+  const result = await Promise.all(
+    listings.map((listing) => {
+      return new Promise<Listing>(async (resolve) => {
+        const result = await limiter.schedule(
+          fetchSingleListingDetails,
+          listing
+        );
+        bar.increment();
+        multiBar.log(
+          `completed fetching details for listing ${result.streetName}, ${result.postalCodeCity}, ${result.coordinates.latitude}, ${result.coordinates.longitude}\n`
+        );
+        resolve(result);
+      });
+    })
+  );
+  multiBar.stop();
+  return result;
+}
+
+export async function fetchSingleListingDetails(listing: Listing) {
+  const result = await fetch(listing.link);
+  const html = await result.text();
+
+  /* cut the coordinates out of this part: {"Latitude":255,"Longitude":256},51.930573,5.589854, */
+  const start = html.indexOf('{"Latitude"');
+  const end1 = html.indexOf("},", start);
+  const end2 = html.indexOf(",", end1 + 2);
+  const end3 = html.indexOf(",", end2 + 1);
+
+  const latitude = parseFloat(html.substring(end1 + 2, end2));
+  const longitude = parseFloat(html.substring(end2 + 1, end3));
+
+  return {
+    ...listing,
+    coordinates: {
+      latitude,
+      longitude,
+    },
   };
 }
