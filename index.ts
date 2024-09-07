@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import fs from "fs";
 import isEqual from "lodash.isequal";
+import cron from "node-cron";
 import { municipalities } from "./data/municipalities";
 import { Listing } from "./types/types";
 import { getElevationForListingsWithCoordinates } from "./utils/elevation";
@@ -15,8 +16,17 @@ import {
 } from "./utils/listings";
 import { startServer } from "./utils/server";
 
+export async function startCronJobs() {
+  // schedule incremental updates 4 times a day
+  cron.schedule("0 0,6,12,18 * * *", () => {
+    console.log("running update");
+    runUpdate();
+  });
+}
+
 (async () => {
   startServer();
+  startCronJobs();
   // runUpdate();
   // addMissingCoordinatesToSavedListings();
 })();
