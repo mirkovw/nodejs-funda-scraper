@@ -3,6 +3,7 @@ import cheerio from "cheerio";
 import cliProgress from "cli-progress";
 import crypto from "crypto";
 import fs from "fs";
+import isEqual from "lodash.isequal";
 import { Listing } from "../types/types";
 import { PromiseQueue } from "./PromiseQueue";
 
@@ -93,6 +94,13 @@ async function fetchSearchResultsPerUrl(url: string, isFirstPage = false) {
         .map((el) => {
           const header = $(el).find("header").text().trim();
           const link = $(el).find("a").attr("href");
+
+          const imageUrl = $(el)
+            .find("a[data-test-id=object-image-link]")
+            .find("img")
+            .attr("srcset")
+            ?.split(" ")[0];
+
           const streetName = $(el)
             .find("h2[data-test-id=street-name-house-number]")
             .text()
@@ -162,6 +170,7 @@ async function fetchSearchResultsPerUrl(url: string, isFirstPage = false) {
           return {
             id,
             header,
+            imageUrl,
             link,
             streetName,
             postalCodeCity,
@@ -200,50 +209,6 @@ async function fetchSearchResultsPerUrl(url: string, isFirstPage = false) {
     url,
     listings,
     urlsToCheck,
-  };
-}
-
-export async function mapListingsToFeatureCollection(listings: Listing[]) {
-  const features = listings.map((listing) => {
-    try {
-      const postalCode =
-        listing.postalCodeCity.split(" ")[0] +
-        " " +
-        listing.postalCodeCity.split(" ")[1];
-      const city = listing.postalCodeCity.split(" ")[2];
-
-      return {
-        type: "Feature",
-        id: listing.id,
-        geometry: {
-          type: "Point",
-          coordinates: [
-            listing.coordinates.longitude,
-            listing.coordinates.latitude,
-          ],
-        },
-        properties: {
-          id: listing.id,
-          price: listing.priceSale,
-          postalCode,
-          city,
-          streetName: listing.streetName,
-          surface: listing.woonoppervlakte,
-          land: listing.perceel,
-          rooms: listing.kamers,
-          energyLabel: listing.energielabel,
-          link: listing.link,
-          elevation: listing.elevation,
-        },
-      };
-    } catch (error) {
-      console.log("error mapping listing to feature", listing.id, error);
-    }
-  });
-
-  return {
-    type: "FeatureCollection",
-    features,
   };
 }
 
@@ -298,4 +263,114 @@ export async function fetchSingleListingDetails(listing: Listing) {
       longitude,
     },
   };
+}
+
+export function getChanges(
+  newListingsById: Map<string, Listing>,
+  savedListingsById: Map<string, Listing>
+) {
+  const toUpdate: Listing[] = [];
+  const toInsert: Listing[] = [];
+  const toDelete: Listing[] = [];
+
+  newListingsById.forEach((listing, id) => {
+    if (savedListingsById.has(id)) {
+      const savedListing: Partial<Listing> = { ...savedListingsById.get(id) };
+      delete savedListing.coordinates;
+      delete savedListing.elevation;
+
+      if (!isEqual(savedListing, listing)) {
+        toUpdate.push(listing);
+      }
+    } else {
+      toInsert.push(listing);
+    }
+  });
+
+  savedListingsById.forEach((listing, id) => {
+    if (!newListingsById.has(id)) {
+      toDelete.push(listing);
+    }
+  });
+
+  return { toUpdate, toInsert, toDelete };
+}
+
+export async function mapListingsToFeatureCollection(listings: Listing[]) {
+  const features = listings.map((listing) => {
+    try {
+      const postalCode =
+        listing.postalCodeCity.split(" ")[0] +
+        " " +
+        listing.postalCodeCity.split(" ")[1];
+      const city = listing.postalCodeCity.split(" ")[2];
+
+      return {
+        type: "Feature",
+        id: listing.id,
+        geometry: {
+          type: "Point",
+          coordinates: [
+            listing.coordinates.longitude,
+            listing.coordinates.latitude,
+          ],
+        },
+        properties: {
+          id: listing.id,
+          price: listing.priceSale,
+          imageUrl: listing.imageUrl,
+          postalCode,
+          city,
+          streetName: listing.streetName,
+          surface: listing.woonoppervlakte,
+          land: listing.perceel,
+          rooms: listing.kamers,
+          energyLabel: listing.energielabel,
+          link: listing.link,
+          elevation: listing.elevation,
+        },
+      };
+    } catch (error) {
+      console.log("error mapping listing to feature", listing.id, error);
+    }
+  });
+
+  return {
+    type: "FeatureCollection",
+    features,
+  };
+}
+
+export function mapFeatureCollectionToListings(
+  featureCollection: any
+): Listing[] {
+  return featureCollection.features.map((feature: any) => {
+    return {
+      id: feature.properties.id,
+      header: feature.properties.streetName,
+      link: feature.properties.link,
+      imageUrl: feature.properties.imageUrl,
+      streetName: feature.properties.streetName,
+      postalCodeCity: `${feature.properties.postalCode} ${feature.properties.city}`,
+      priceSale: feature.properties.price,
+      woonoppervlakte: feature.properties.surface,
+      perceel: feature.properties.land,
+      kamers: feature.properties.rooms,
+      energielabel: feature.properties.energyLabel,
+      coordinates: {
+        latitude: feature.geometry.coordinates[1],
+        longitude: feature.geometry.coordinates[0],
+      },
+      elevation: feature.properties.elevation,
+    };
+  });
+}
+
+export function getListingsMapById(listings: Listing[]) {
+  const listingsById = new Map<string, Listing>();
+  listings.forEach((listing) => {
+    listingsById.set(listing.id, listing);
+  });
+
+  return listingsById;
 }

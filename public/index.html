@@ -27,13 +27,21 @@
   </head>
   <body>
     <div id="map"></div>
+    <form id="inputForm">
+      <input
+        placeholder="Minimal Elevation (m)"
+        type="number"
+        id="elevation"
+        style="position: absolute; top: 10px; left: 10px; z-index: 1"
+      />
 
-    <input
-      placeholder="Minimal Elevation (m)"
-      type="number"
-      id="elevation"
-      style="position: absolute; top: 10px; left: 10px; z-index: 1"
-    />
+      <input
+        placeholder="Max Price (€)"
+        type="number"
+        id="max_price"
+        style="position: absolute; top: 40px; left: 10px; z-index: 1"
+      />
+    </form>
 
     <button
       style="position: absolute; top: 10px; right: 10px; z-index: 1"
@@ -50,16 +58,33 @@
     </button>
     <script>
       (async () => {
-        document.getElementById("elevation").addEventListener("input", (e) => {
-          const elevation = e.target.value;
+        const formValues = {
+          maxPrice: 0,
+          elevation: 0,
+        };
+
+        function filterListings({ maxPrice, elevation }) {
           const filteredFeatures = fc.features.filter((feature) => {
-            return feature.properties.elevation >= elevation;
+            return (
+              feature.properties.price <= maxPrice &&
+              feature.properties.elevation >= elevation
+            );
           });
 
           map.getSource("earthquakes").setData({
             type: "FeatureCollection",
             features: filteredFeatures,
           });
+        }
+
+        document.getElementById("elevation").addEventListener("input", (e) => {
+          formValues.elevation = e.target.value;
+          filterListings(formValues);
+        });
+
+        document.getElementById("max_price").addEventListener("input", (e) => {
+          formValues.maxPrice = e.target.value;
+          filterListings(formValues);
         });
 
         document.getElementById("update").addEventListener("click", () => {
@@ -77,8 +102,8 @@
               console.log(text);
             });
         }
-        const fc = await fetch("listings.json").then((response) =>
-          response.json()
+        const fc = await fetch("listings_feature_collection.json").then(
+          (response) => response.json()
         );
 
         console.log("features loaded", fc.features.length);
@@ -242,6 +267,7 @@
             streetName,
             city,
             link,
+            imageUrl,
             price,
             surface,
             land,
@@ -252,8 +278,9 @@
 
           return `
           <div>
+            <img src="${imageUrl}" style="width: 100%; height: auto" />
             <h3>${streetName}, ${city}</h3>
-            <p>Elevation: ${elevation} m</p>
+            <p>Elevation: ${Math.round(elevation * 100) / 100} m</p>
             <p>Energy label: ${energyLabel}</p>
             <p>Price: €${price.toLocaleString()}</p>
             <p>Surface: ${surface} m²</p>

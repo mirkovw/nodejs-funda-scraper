@@ -8,6 +8,7 @@ export type Listing = {
   id: string;
   header: string;
   link: string;
+  imageUrl: string;
   streetName: string;
   postalCodeCity: string;
   priceSale: number;
