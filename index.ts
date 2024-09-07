@@ -85,6 +85,8 @@ export async function runUpdate() {
     `toUpdate: ${toUpdate.length}, toInsert: ${toInsert.length}, toDelete: ${toDelete.length}`
   );
 
+  /* NEW LISTINGS */
+
   /* add coordinates to new listings */
   const newListingsWithCoordinatesAndElevation = await getListingDetails(
     toInsert
@@ -98,6 +100,8 @@ export async function runUpdate() {
   newListingsWithCoordinatesAndElevation.forEach((listing) => {
     savedListingsById.set(listing.id, listing);
   });
+
+  /* UPDATED LISTINGS */
 
   /* determine if the updated listings need new coordinates */
   const toUpdateChanges = toUpdate.map((listing) => {
@@ -142,6 +146,8 @@ export async function runUpdate() {
   toUpdate.forEach((listing) => {
     savedListingsById.set(listing.id, listing);
   });
+
+  /* DELETED LISTINGS */
 
   /* remove deleted listings from savedListings */
   toDelete.forEach((listing) => {

@@ -95,11 +95,17 @@ async function fetchSearchResultsPerUrl(url: string, isFirstPage = false) {
           const header = $(el).find("header").text().trim();
           const link = $(el).find("a").attr("href");
 
-          const imageUrl = $(el)
+          // srcset is like "https://cloud.funda.nl/valentina_media/196/579/234_180x120.jpg 180w,https://cloud.funda.nl/valentina_media/196/579/234_360x240.jpg 360w,https://cloud.funda.nl/valentina_media/196/579/234_720x480.jpg 720w"
+          const srcSet = $(el)
             .find("a[data-test-id=object-image-link]")
             .find("img")
-            .attr("srcset")
-            ?.split(" ")[0];
+            .attr("srcset");
+
+          const images = srcSet?.split(",").map((img) => {
+            return img.split(" ")[0];
+          });
+
+          const imageUrl = images ? images[images.length - 1] : undefined;
 
           const streetName = $(el)
             .find("h2[data-test-id=street-name-house-number]")
@@ -275,12 +281,20 @@ export function getChanges(
 
   newListingsById.forEach((listing, id) => {
     if (savedListingsById.has(id)) {
-      const savedListing: Partial<Listing> = { ...savedListingsById.get(id) };
-      delete savedListing.coordinates;
-      delete savedListing.elevation;
+      const savedListing = savedListingsById.get(id) as Listing;
+      const tempListingToCompare: Partial<Listing> = {
+        ...savedListing,
+      };
+      delete tempListingToCompare.coordinates;
+      delete tempListingToCompare.elevation;
 
-      if (!isEqual(savedListing, listing)) {
-        toUpdate.push(listing);
+      if (!isEqual(tempListingToCompare, listing)) {
+        const listingToPush = {
+          ...listing,
+          coordinates: savedListing.coordinates,
+          elevation: savedListing.elevation,
+        };
+        toUpdate.push(listingToPush as Listing);
       }
     } else {
       toInsert.push(listing);

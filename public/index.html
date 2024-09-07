@@ -23,6 +23,31 @@
         bottom: 0;
         width: 100%;
       }
+
+      .popup {
+        /* max-width: 500px; */
+        /* padding: 10px;
+        background-color: white;
+        border-radius: 5px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+
+        display: flex;
+        flex-direction: row; */
+      }
+
+      .popup_inner {
+        display: flex;
+        flex-direction: row;
+      }
+
+      .popup_inner_left {
+        flex: 3;
+      }
+
+      .popup_inner_right {
+        flex: 2;
+        padding: 10px;
+      }
     </style>
   </head>
   <body>
@@ -66,10 +91,13 @@
         function filterListings({ maxPrice, elevation }) {
           const filteredFeatures = fc.features.filter((feature) => {
             return (
-              feature.properties.price <= maxPrice &&
-              feature.properties.elevation >= elevation
+              (maxPrice && maxPrice > 0
+                ? feature.properties.price <= maxPrice
+                : true) && feature.properties.elevation >= elevation
             );
           });
+
+          console.log(filteredFeatures);
 
           map.getSource("earthquakes").setData({
             type: "FeatureCollection",
@@ -248,8 +276,9 @@
               }
             }
 
-            new mapboxgl.Popup()
+            new mapboxgl.Popup({ className: "popup" })
               .setLngLat(coordinates)
+              .setMaxWidth("750px")
               .setHTML(getListingHtmlFromFeature(e.features[0]))
               .addTo(map);
           });
@@ -277,16 +306,21 @@
           } = feature.properties;
 
           return `
-          <div>
-            <img src="${imageUrl}" style="width: 100%; height: auto" />
-            <h3>${streetName}, ${city}</h3>
-            <p>Elevation: ${Math.round(elevation * 100) / 100} m</p>
-            <p>Energy label: ${energyLabel}</p>
-            <p>Price: €${price.toLocaleString()}</p>
-            <p>Surface: ${surface} m²</p>
-            <p>Land: ${land} m²</p>
-            <p>Rooms: ${rooms}</p>
-            <a href="${link}" target="_blank">More info</a>
+
+          <div class="popup_inner">
+            <div class="popup_inner_left">
+              <img src="${imageUrl}" style="width: 100%; height: auto" />
+            </div>
+            <div class="popup_inner_right">
+              <h3>${streetName}, ${city}</h3>
+              <p>Price: €${price.toLocaleString()}</p>
+              <p>Rooms: ${rooms}</p>
+              <p>Elevation: ${Math.round(elevation * 100) / 100} m</p>
+              <p>Energy label: ${energyLabel}</p>
+              <p>Surface: ${surface} m²</p>
+              <p>Land: ${land} m²</p>
+              <a href="${link}" target="_blank">More info</a>
+            </div>
           </div>
         `;
         }
