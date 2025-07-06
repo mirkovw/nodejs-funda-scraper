@@ -1,132 +1,52 @@
-import env from "env-var";
-import isEqual from "lodash.isequal";
-import { AnyBulkWriteOperation, MongoClient, ServerApiVersion } from "mongodb";
-import { DbUpdate, Listing } from "../types/types";
+import { MongoClient } from "mongodb";
+import { Listing, ListingWithElevation } from "../types/types";
 
-const uri = env.get("MONGO_URI").required().asString();
+const uri = process.env.MONGODB_URI || "mongodb://localhost:27017";
+const dbName = "funda-scraper";
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
-});
+let client: MongoClient;
 
-export async function getDbListings() {
-  await client.connect();
-  const collection = client.db("listings_app").collection<Listing>("listings");
-  const listings = await collection.find({}).toArray();
-  await client.close();
-
-  return listings;
-}
-
-export async function updateListingsInDb({
-  toInsert,
-  toDelete,
-  toUpdate,
-}: DbUpdate) {
-  await client.connect();
-  const collection = client.db("listings_app").collection<Listing>("listings");
-
-  console.log("to delete", toDelete.length);
-  console.log("to update", toUpdate.length);
-  console.log("to insert", toInsert.length);
-
-  const bulkOperations = getBulkOperations(toUpdate, toInsert, toDelete);
-
-  if (bulkOperations.length > 0) {
-    console.log("Updating db...");
-    await collection.bulkWrite(bulkOperations);
+export async function connectToDatabase() {
+  if (!client) {
+    client = new MongoClient(uri);
+    await client.connect();
   }
-
-  console.log("Closing connection to MongoDB...");
-  await client.close();
+  return client.db(dbName);
 }
 
-export function getListingsMapById(listings: Listing[]) {
-  const listingsById = new Map<string, Listing>();
+export async function getListingsCollection() {
+  const db = await connectToDatabase();
+  return db.collection<ListingWithElevation>("listings");
+}
+
+export async function getAllListings() {
+  const collection = await getListingsCollection();
+  return collection.find().toArray();
+}
+
+export async function insertListings(listings: ListingWithElevation[]) {
+  const collection = await getListingsCollection();
+  if (listings.length === 0) return;
+  return collection.insertMany(listings);
+}
+
+export async function deleteListings(listings: Listing[]) {
+  const collection = await getListingsCollection();
+  const ids = listings.map((listing) => listing.id);
+  if (ids.length === 0) return;
+  return collection.deleteMany({ id: { $in: ids } });
+}
+
+export async function getListingsById(ids: string[]) {
+  const collection = await getListingsCollection();
+  return collection.find({ id: { $in: ids } }).toArray();
+}
+
+export async function getListingsMapByIdFromDb() {
+  const listings = await getAllListings();
+  const listingsById = new Map<string, ListingWithElevation>();
   listings.forEach((listing) => {
     listingsById.set(listing.id, listing);
   });
-
   return listingsById;
-}
-
-export function getChanges(
-  localListingsById: Map<string, Listing>,
-  dbListingsById: Map<string, Listing>
-) {
-  const toUpdate: Listing[] = [];
-  const toInsert: Listing[] = [];
-  const toDelete: Listing[] = [];
-
-  localListingsById.forEach((listing, id) => {
-    if (dbListingsById.has(id)) {
-      const dbListing: Partial<Listing> = { ...dbListingsById.get(id) };
-      delete (dbListing as any)._id;
-      delete dbListing.coordinates;
-      delete dbListing.elevation;
-
-      if (!isEqual(dbListing, listing)) {
-        console.log("SOMETHING CHANGED");
-        console.log(dbListing);
-        console.log(listing);
-        toUpdate.push(listing);
-      }
-    } else {
-      toInsert.push(listing);
-    }
-  });
-
-  dbListingsById.forEach((listing, id) => {
-    if (!localListingsById.has(id)) {
-      toDelete.push(listing);
-    }
-  });
-
-  return { toUpdate, toInsert, toDelete };
-}
-
-export function getBulkOperations(
-  toUpdate: Listing[],
-  toInsert: Listing[],
-  toDelete: Listing[]
-): AnyBulkWriteOperation<Listing>[] {
-  const bulkOperations: AnyBulkWriteOperation<Listing>[] = [];
-
-  if (toUpdate.length > 0) {
-    toUpdate.forEach((listing) => {
-      bulkOperations.push({
-        updateOne: {
-          filter: { id: listing.id },
-          update: { $set: listing },
-        },
-      });
-    });
-  }
-
-  if (toInsert.length > 0) {
-    toInsert.forEach((listing) => {
-      bulkOperations.push({
-        insertOne: {
-          document: listing,
-        },
-      });
-    });
-  }
-
-  if (toDelete.length > 0) {
-    toDelete.forEach((listing) => {
-      bulkOperations.push({
-        deleteOne: {
-          filter: { id: listing.id },
-        },
-      });
-    });
-  }
-
-  return bulkOperations;
 }

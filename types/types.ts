@@ -4,22 +4,28 @@ export type Address = {
   place: string;
 };
 
+
 export type Listing = {
   id: string;
-  header: string;
   link: string;
+};
+
+export type ListingWithDetails = Listing & {
   imageUrl: string;
-  streetName: string;
-  postalCodeCity: string;
-  priceSale: number;
-  woonoppervlakte: number;
-  perceel: number;
-  kamers: number;
-  energielabel: string;
+  addressTitle: string,
+  postalCode: string;
+  city: string;
+  price: number;
+  livingArea: number;
+  rooms: number;
+  energyLabel: string;
   coordinates: {
     latitude: number;
     longitude: number;
   };
+}
+
+export type ListingWithElevation = ListingWithDetails & {
   elevation: number;
 };
 

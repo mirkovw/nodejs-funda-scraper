@@ -3,3 +3,4 @@ dist/
 .env
 listings.json
 listings_feature_collection.json
+gemini_scratchpad.md

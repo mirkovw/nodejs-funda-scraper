@@ -8,27 +8,6 @@ export function getChunks<T>(array: T[], size: number): T[][] {
   return chunks;
 }
 
-export function isValidAddress(listing: Listing) {
-  // is valid streetnamne
-  if (listing.streetName === "") {
-    console.log(listing.streetName);
-    return false;
-  }
-
-  // has full postcode
-  const split = listing.postalCodeCity.split(" ");
-  if (split[0].length !== 4 || split[1].length !== 2 || split.length < 3) {
-    return false;
-  }
-
-  // has place
-  if (split.slice(2).join(" ") === "") {
-    return false;
-  }
-
-  return true;
-}
-
 /**
  * replaces characters in string to create a url friendly string
  * @param string
@@ -65,4 +44,66 @@ export function getNodeArrays(allIndexes: number, numberOfNodes: number) {
   });
 
   return nodeArrays;
+}
+
+
+type KeyValuePair = [string, number];
+type DataElement = KeyValuePair | Record<string, number> | string | number | [];
+type ParsedObject = Record<string, any>;
+
+export function parseDataStructure(data: DataElement[]): any {
+    const result: ParsedObject = {};
+    let current = result;
+
+    const cache: Map<number, any> = new Map(); // Cache to store already resolved indices
+
+    function resolve(index: number): any {
+        if (cache.has(index)) {
+            return cache.get(index);
+        }
+
+        const item = data[index];
+
+        let resolved: any;
+        if (typeof item === 'object' && !Array.isArray(item)) {
+            resolved = {};
+            for (const [key, valIndex] of Object.entries(item)) {
+                resolved[key] = resolve(valIndex);
+            }
+        } else {
+            resolved = item;
+        }
+
+        cache.set(index, resolved);
+        return resolved;
+    }
+
+    for (let i = 0; i < data.length; i++) {
+        const item = data[i];
+
+        if (Array.isArray(item) && item.length === 2 && typeof item[0] === "string") {
+            const [key, index] = item;
+            const obj = {};
+            current[key] = obj;
+            current = obj;
+        } else if (typeof item === "object" && !Array.isArray(item)) {
+            for (const [key, valIndex] of Object.entries(item)) {
+                current[key] = resolve(valIndex);
+            }
+        }
+    }
+
+    return result;
+}
+
+export function getTimeStamp(): string {
+  var tzoffset = (new Date()).getTimezoneOffset() * 60000; //offset in milliseconds
+  var localISOTime = (new Date(Date.now() - tzoffset)).toISOString().slice(0, -1);
+  return localISOTime;  
+}
+export function getTimeStampWithOffset(): string {
+  const date = new Date();
+  const offset = date.getTimezoneOffset() * 60000; // offset in milliseconds
+  const localDate = new Date(date.getTime() - offset);
+  return localDate.toISOString();
 }

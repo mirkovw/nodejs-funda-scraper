@@ -292,16 +292,17 @@
         });
 
         function getListingHtmlFromFeature(feature) {
+
           var {
-            streetName,
-            city,
-            link,
-            imageUrl,
             price,
-            surface,
-            land,
+            imageUrl,
+            addressTitle,
+            postalCode,
+            city,
+            livingArea,
             rooms,
             energyLabel,
+            link,
             elevation,
           } = feature.properties;
 
@@ -312,13 +313,12 @@
               <img src="${imageUrl}" style="width: 100%; height: auto" />
             </div>
             <div class="popup_inner_right">
-              <h3>${streetName}, ${city}</h3>
-              <p>Price: €${price.toLocaleString()}</p>
+              <h3>${addressTitle}, ${city}</h3>
+              <p>Price: €${price}</p>
               <p>Rooms: ${rooms}</p>
               <p>Elevation: ${Math.round(elevation * 100) / 100} m</p>
               <p>Energy label: ${energyLabel}</p>
-              <p>Surface: ${surface} m²</p>
-              <p>Land: ${land} m²</p>
+              <p>Surface: ${livingArea} m²</p>
               <a href="${link}" target="_blank">More info</a>
             </div>
           </div>

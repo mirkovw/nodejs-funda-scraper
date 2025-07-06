@@ -1,28 +1,21 @@
 import Bottleneck from "bottleneck";
 import cheerio from "cheerio";
-import cliProgress from "cli-progress";
 import crypto from "crypto";
 import fs from "fs";
-import isEqual from "lodash.isequal";
-import { Listing } from "../types/types";
+import { Listing, ListingWithDetails, ListingWithElevation } from "../types/types";
 import { PromiseQueue } from "./PromiseQueue";
+import { parseDataStructure } from "./utils";
 
 const baseUrl = "https://www.funda.nl/zoeken/koop";
 
 export async function getAllListingsFromFunda(municipalities: string[] = []) {
-  const multiBar = new cliProgress.MultiBar(
-    {},
-    cliProgress.Presets.shades_classic
-  );
-  const bar = multiBar.create(municipalities.length, 0);
-
   const startUrls = municipalities.map(
     (municipality) => `${baseUrl}?selected_area=["${municipality}"]`
   );
 
   const queue = new PromiseQueue([], 4);
   const tasks = startUrls.map(
-    (url) => () => fetchSearchResultsPerUrl(url, true)
+    (url) => () => fetchSearchResultsPerUrlV2(url, true)
   );
   queue.add(tasks);
 
@@ -32,38 +25,30 @@ export async function getAllListingsFromFunda(municipalities: string[] = []) {
 
   return new Promise<Listing[]>((resolve) => {
     queue.on("progress", (progress) => {
-      bar.increment();
-      multiBar.log(
-        `finished checking url ${progress.result.url} with ${progress.result.listings.length} listings\n`
-      );
+      console.log(`${ queue.complete.length + queue.failed.length }/${queue.total} finished checking url ${progress.result.url} with ${progress.result.listings.length} listings`);
 
       if (progress.result.listings.length === 0) {
         const retryIndex = retriesPerUrlMap.get(progress.result.url) || 0;
         retriesPerUrlMap.set(progress.result.url, retryIndex + 1);
         if (retryIndex >= 3) {
-          multiBar.log(`reached max retries for url: ${progress.result.url}\n`);
+          console.log(`reached max retries for url: ${progress.result.url}`);
           return;
         }
 
-        multiBar.log(
-          `retrying url ${progress.result.url}, attempt ${retryIndex}\n`
-        );
-        queue.add([() => fetchSearchResultsPerUrl(progress.result.url)]); // TODO add limited retries
-        bar.setTotal(queue.total);
+        console.log(`retrying url ${progress.result.url}, attempt ${retryIndex}`);
+        queue.add([() => fetchSearchResultsPerUrlV2(progress.result.url)]); // TODO add limited retries
       }
 
       if (progress.result.urlsToCheck?.length) {
         queue.add(
           progress.result.urlsToCheck.map(
-            (url: string) => () => fetchSearchResultsPerUrl(url)
+            (url: string) => () => fetchSearchResultsPerUrlV2(url)
           )
         );
-        bar.setTotal(queue.total);
       }
     });
 
     queue.on("complete", async (results) => {
-      multiBar.stop();
       const allListings: Listing[] = results.completed
         .map((result: any) => result.listings)
         .flat();
@@ -74,142 +59,65 @@ export async function getAllListingsFromFunda(municipalities: string[] = []) {
   });
 }
 
-async function fetchSearchResultsPerUrl(url: string, isFirstPage = false) {
+export async function fetchSearchResultsPerUrlV2(url: string, isFirstPage = false) {
   const searchResultsPerPage = 15;
   const urlsToCheck: string[] = [];
-  const listings = await fetch(encodeURI(url))
-    .then((res) => {
-      if (!res.ok) {
-        throw Error(res.statusText);
-      }
 
-      return res.text();
+  const result = await fetch(encodeURI(url));
+  const html = await result.text();
+  const $ = cheerio.load(html);
+
+  // the div containing all listings has ID PageListings
+  const listingsDiv = $("#PageListings");
+
+  // somewhere within the listingsDiv there are multiple divs that each contain a <a> tag with the attribute data-testid="listingDetailsAddress"
+  const listingElements = listingsDiv.find(
+    '[data-testid="listingDetailsAddress"]'
+  );
+
+  // get the href attribute of each <a> tag
+  const links = listingElements
+    .map((_, el) => {
+      return $(el).attr("href");
     })
-    .then((html) => {
-      const $ = cheerio.load(html);
+    .get();
+  
 
-      // find a div with attribute data-test-id="search-result-item"
-      const listings = $("div[data-test-id=search-result-item]")
-        .toArray()
-        .map((el) => {
-          const header = $(el).find("header").text().trim();
-          const link = $(el).find("a").attr("href");
+  const listings: Listing[] = links.map((link) => {
+    const id = crypto
+      .createHash("md5")
+      .update(link)
+      .digest("hex");
 
-          // srcset is like "https://cloud.funda.nl/valentina_media/196/579/234_180x120.jpg 180w,https://cloud.funda.nl/valentina_media/196/579/234_360x240.jpg 360w,https://cloud.funda.nl/valentina_media/196/579/234_720x480.jpg 720w"
-          const srcSet = $(el)
-            .find("a[data-test-id=object-image-link]")
-            .find("img")
-            .attr("srcset");
+    return {
+      id,
+      link: `https://www.funda.nl${link}`,
+    } as Listing;
+  })
 
-          const images = srcSet?.split(",").map((img) => {
-            return img.split(" ")[0];
-          });
+  if (isFirstPage) {
+    // if this is the first page of the search results, also return a array with urls to add to the task queue
+    const searchResults = $("h1")
+      .text()
+      .trim()
+      .split(" ")[0]
+      .replace(".", "")
+      .trim();
 
-          const imageUrl = images ? images[images.length - 1] : undefined;
+    const amountOfSearchPages = Math.ceil(
+      parseInt(searchResults) / searchResultsPerPage
+    );
 
-          const streetName = $(el)
-            .find("h2[data-test-id=street-name-house-number]")
-            .text()
-            .trim();
-          const postalCodeCity = $(el)
-            .find("div[data-test-id=postal-code-city]")
-            .text()
-            .trim();
-          const priceSale = parseInt(
-            $(el)
-              .find("p[data-test-id=price-sale]")
-              .text()
-              .replace("€", "")
-              .replaceAll(".", "")
-              .replace("k.k.", "")
-              .trim()
-          );
-          const allLists = $(el).find("ul");
-          const features = $(allLists[1])
-            .find("li")
-            .map((i, li) => $(li).text().trim())
-            .get()
-            .reduce((prev, curr, i) => {
-              const determineType = (content: string, index: number) => {
-                if (content.includes("m²")) {
-                  if (index === 0) {
-                    return {
-                      woonoppervlakte: parseInt(
-                        content.replace("m²", "").replace(".", "").trim()
-                      ),
-                    };
-                  }
-                  if (index === 1) {
-                    return {
-                      perceel: parseInt(
-                        content.replace("m²", "").replace(".", "").trim()
-                      ),
-                    };
-                  }
-                }
+    for (let i = 2; i <= amountOfSearchPages; i++) {
+      urlsToCheck.push(`${url}&search_result=${i}`);
+    }
+  }
 
-                // if it's a number
-                if (content.match(/\d+/)) {
-                  return { kamers: parseInt(content) };
-                }
+  if (listings.length === 0) {
+    console.log("no listings found for url", url);
+    fs.writeFileSync(`./output/no-listings-${Date.now()}.html`, html);
+  }
 
-                // if it's a single capital letter
-                if (content.match(/[A-Z]/)) {
-                  return { energielabel: content };
-                }
-
-                return { unknown: content };
-              };
-
-              return {
-                ...prev,
-                ...determineType(curr, i),
-              };
-            }, {});
-
-          // use link as unique id
-          const id = crypto
-            .createHash("md5")
-            .update(link as string)
-            .digest("hex");
-
-          return {
-            id,
-            header,
-            imageUrl,
-            link,
-            streetName,
-            postalCodeCity,
-            priceSale,
-            ...features,
-          } as Listing;
-        });
-
-      if (isFirstPage) {
-        // if this is the first page of the search results, also return a array with urls to add to the task queue
-        const searchResults = $("h1")
-          .text()
-          .trim()
-          .split(" ")[0]
-          .replace(".", "")
-          .trim();
-
-        const amountOfSearchPages = Math.ceil(
-          parseInt(searchResults) / searchResultsPerPage
-        );
-
-        for (let i = 2; i <= amountOfSearchPages; i++) {
-          urlsToCheck.push(`${url}&search_result=${i}`);
-        }
-      }
-
-      if (listings.length === 0) {
-        console.log("no listings found for url", url);
-        fs.writeFileSync(`./output/no-listings-${Date.now()}.html`, html);
-      }
-
-      return listings;
-    });
 
   return {
     url,
@@ -218,85 +126,153 @@ async function fetchSearchResultsPerUrl(url: string, isFirstPage = false) {
   };
 }
 
-export async function getListingDetails(listings: Listing[]) {
-  const multiBar = new cliProgress.MultiBar(
-    {},
-    cliProgress.Presets.shades_classic
-  );
-  const bar = multiBar.create(listings.length, 0);
 
+export async function getListingDetails(listings: Listing[]) {
   const limiter = new Bottleneck({
     minTime: 150,
     maxConcurrent: 4,
   });
+  let count = 0;
 
-  const result = await Promise.all(
+  const result: ListingWithDetails[] = await Promise.all(
     listings.map((listing) => {
-      return new Promise<Listing>(async (resolve) => {
+      return new Promise<ListingWithDetails>(async (resolve) => {
         const result = await limiter.schedule(
-          fetchSingleListingDetails,
+          fetchSingleListingDetailsV2,
           listing
         );
-        bar.increment();
-        multiBar.log(
-          `completed fetching details for listing ${result.streetName}, ${result.postalCodeCity}, ${result.coordinates.latitude}, ${result.coordinates.longitude}\n`
+
+        count++
+        console.log(
+          `${count}/${listings.length} completed fetching details for listing ${result.addressTitle}, ${result.city}, ${result.coordinates.latitude}, ${result.coordinates.longitude}`
         );
+
         resolve(result);
       });
     })
   );
-  multiBar.stop();
+  // multiBar.stop();
   return result;
 }
 
-export async function fetchSingleListingDetails(listing: Listing) {
+export async function fetchSingleListingDetailsV3(listing: Listing) {
   const result = await fetch(listing.link);
-  const html = await result.text();
+    const html = await result.text();
 
-  /* cut the coordinates out of this part: {"Latitude":255,"Longitude":256},51.930573,5.589854, */
-  const start = html.indexOf('{"Latitude"');
-  const end1 = html.indexOf("},", start);
-  const end2 = html.indexOf(",", end1 + 2);
-  const end3 = html.indexOf(",", end2 + 1);
+    // at the end of the html file there is a script tag like <script type="application/json" id="__NUXT_DATA__">[{"foo: "bar"}]</script>
+    const $ = cheerio.load(html);
+    const nuxtDataEl = $("script#__NUXT_DATA__").html();
+    if (!nuxtDataEl) {
+      throw new Error("no script tag found for listing");
+    }
 
-  const latitude = parseFloat(html.substring(end1 + 2, end2));
-  const longitude = parseFloat(html.substring(end2 + 1, end3));
+    const nuxtData = nuxtDataEl.substring(nuxtDataEl.indexOf("["));
 
-  return {
-    ...listing,
-    coordinates: {
-      latitude,
-      longitude,
-    },
-  };
+    const parsedNuxtData = parseDataStructure(JSON.parse(nuxtData));
+
+    fs.writeFileSync(
+      `./output/temp/listing-${listing.id}-details.json`,
+      JSON.stringify(parsedNuxtData, null, 2)
+    );
+
 }
 
-export function getChanges(
+export async function fetchSingleListingDetailsV2(listing: Listing): Promise<ListingWithDetails> {
+  try {
+
+    const result = await fetch(listing.link);
+    const html = await result.text();
+
+    // at the end of the html file there is a script tag like <script type="application/json" id="__NUXT_DATA__">[{"foo: "bar"}]</script>
+    const $ = cheerio.load(html);
+    const nuxtDataEl = $("script#__NUXT_DATA__").html();
+    if (!nuxtDataEl) {
+      throw new Error("no script tag found for listing");
+    }
+
+    const nuxtData = nuxtDataEl.substring(nuxtDataEl.indexOf("["));
+    const parsedNuxtData: any[] = JSON.parse(nuxtData);
+
+    // somewhere in the parsedNuxtData array there is a object { lat: 0.000, long: 0.000 }, lets find it
+    const coordinateIndexes = parsedNuxtData.find((el) => {
+      return el?.lat && el?.lng;
+    });   
+
+    const latitude = parsedNuxtData[coordinateIndexes?.lat] || 0;
+    const longitude = parsedNuxtData[coordinateIndexes?.lng] || 0;
+
+    const addressTitleIndex = parsedNuxtData.find((el) => el?.addressTitle);
+    const addressTitle = parsedNuxtData[addressTitleIndex?.addressTitle] || "";
+
+    const otherIndexes = parsedNuxtData.find((el) => el?.vraagprijs)
+
+    const postalCode = parsedNuxtData[otherIndexes?.postcode] || "";
+    const city = parsedNuxtData[otherIndexes?.plaats] || "";
+    const livingArea = parseInt(parsedNuxtData[otherIndexes?.woonoppervlakte]) || 0;
+    const rooms = parseInt(parsedNuxtData[otherIndexes?.aantalkamers]) || 0;
+    const energyLabel = parsedNuxtData[otherIndexes?.energieklasse] || "";
+    const price = parseInt(parsedNuxtData[otherIndexes?.vraagprijs]) || -1;
+
+    const mediaIndexes = parsedNuxtData.find((el) => {
+      return el?.layout && el?.photos && el?.videos;
+    });
+
+    const photosIndexes = parsedNuxtData[mediaIndexes?.photos];
+    
+    const photosItemsIndexes = parsedNuxtData[photosIndexes?.items];
+    const firstThumbnailItemIndex = parsedNuxtData[photosItemsIndexes[0]]
+    const firstThumbnailId = parsedNuxtData[firstThumbnailItemIndex?.id] || '';
+
+    const thumbnailBaseUrl = parsedNuxtData[photosIndexes?.thumbnailBaseUrl] || '';
+
+    const imageUrl = thumbnailBaseUrl.replace("{id}", firstThumbnailId);
+    
+    return {
+      id: listing.id,
+      link: listing.link,
+      imageUrl,
+      price,
+      addressTitle,
+      postalCode,
+      city,
+      livingArea,
+      rooms,
+      energyLabel,
+      coordinates: {
+        latitude,
+        longitude,
+      },
+    }
+
+  } catch (error) {
+    console.error(`Error fetching details for listing ${listing.id}:`, error);
+    
+    return {
+      ...listing,
+      coordinates: {
+        latitude: 0,
+        longitude: 0,
+      },
+      addressTitle: "",
+      postalCode: "",
+      city: "",
+      livingArea: 0,
+      rooms: 0,
+      energyLabel: "",
+      price: -1,
+    } as ListingWithDetails;
+  }
+}
+
+export function getUpdates(
   newListingsById: Map<string, Listing>,
-  savedListingsById: Map<string, Listing>
-) {
-  const toUpdate: Listing[] = [];
+  savedListingsById: Map<string, ListingWithElevation>) {
+
   const toInsert: Listing[] = [];
   const toDelete: Listing[] = [];
 
   newListingsById.forEach((listing, id) => {
-    if (savedListingsById.has(id)) {
-      const savedListing = savedListingsById.get(id) as Listing;
-      const tempListingToCompare: Partial<Listing> = {
-        ...savedListing,
-      };
-      delete tempListingToCompare.coordinates;
-      delete tempListingToCompare.elevation;
-
-      if (!isEqual(tempListingToCompare, listing)) {
-        const listingToPush = {
-          ...listing,
-          coordinates: savedListing.coordinates,
-          elevation: savedListing.elevation,
-        };
-        toUpdate.push(listingToPush as Listing);
-      }
-    } else {
+    if (!savedListingsById.has(id)) {
       toInsert.push(listing);
     }
   });
@@ -307,18 +283,12 @@ export function getChanges(
     }
   });
 
-  return { toUpdate, toInsert, toDelete };
+  return { toInsert, toDelete };
 }
 
-export async function mapListingsToFeatureCollection(listings: Listing[]) {
+export async function mapListingsToFeatureCollection(listings: ListingWithElevation[]) {
   const features = listings.map((listing) => {
     try {
-      const postalCode =
-        listing.postalCodeCity.split(" ")[0] +
-        " " +
-        listing.postalCodeCity.split(" ")[1];
-      const city = listing.postalCodeCity.split(" ")[2];
-
       return {
         type: "Feature",
         id: listing.id,
@@ -331,15 +301,14 @@ export async function mapListingsToFeatureCollection(listings: Listing[]) {
         },
         properties: {
           id: listing.id,
-          price: listing.priceSale,
+          price: listing.price,
           imageUrl: listing.imageUrl,
-          postalCode,
-          city,
-          streetName: listing.streetName,
-          surface: listing.woonoppervlakte,
-          land: listing.perceel,
-          rooms: listing.kamers,
-          energyLabel: listing.energielabel,
+          addressTitle: listing.addressTitle,
+          postalCode: listing.postalCode,
+          city: listing.city,
+          livingArea: listing.livingArea,
+          rooms: listing.rooms,
+          energyLabel: listing.energyLabel,
           link: listing.link,
           elevation: listing.elevation,
         },
@@ -357,7 +326,7 @@ export async function mapListingsToFeatureCollection(listings: Listing[]) {
 
 export function mapFeatureCollectionToListings(
   featureCollection: any
-): Listing[] {
+): ListingWithElevation[] {
   return featureCollection.features.map((feature: any) => {
     return {
       id: feature.properties.id,
@@ -380,8 +349,19 @@ export function mapFeatureCollectionToListings(
   });
 }
 
-export function getListingsMapById(listings: Listing[]) {
-  const listingsById = new Map<string, Listing>();
+
+export function getTypedListingsMapById<T extends Listing | ListingWithDetails>(listings: T[]) {
+  const listingsById = new Map<string, T>();
+  listings.forEach((listing) => {
+    listingsById.set(listing.id, listing);
+  });
+
+  return listingsById;
+}
+
+
+export function getListingsMapById(listings: (Listing | ListingWithElevation)[]) {
+  const listingsById = new Map<string, (Listing | ListingWithElevation)>();
   listings.forEach((listing) => {
     listingsById.set(listing.id, listing);
   });
