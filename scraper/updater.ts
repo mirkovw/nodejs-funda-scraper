@@ -27,7 +27,7 @@ export async function runUpdate() {
   
   const newListingsById = getTypedListingsMapById(newListings);
 
-  /* determine which listings are new, updated or deleted */
+  /* determine which listings are new, or deleted */
   const { toInsert, toDelete } = getUpdates(
     newListingsById,
     savedListingsById

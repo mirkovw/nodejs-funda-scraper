@@ -1,7 +1,7 @@
 import "dotenv/config";
 import cron from "node-cron";
-import { startServer } from "./server/index";
 import { runUpdate } from "./scraper/updater";
+import { startServer } from "./server/index";
 
 export async function startCronJobs() {
   // schedule incremental updates 4 times a day
@@ -12,6 +12,8 @@ export async function startCronJobs() {
 }
 
 (async () => {
+  // run initial update
+  await runUpdate();
   startServer();
   // startCronJobs();
 })();

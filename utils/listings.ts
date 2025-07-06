@@ -9,7 +9,7 @@ import { parseDataStructure } from "./utils";
 const baseUrl = "https://www.funda.nl/zoeken/koop";
 
 export async function getAllListingsFromFunda(municipalities: string[] = []) {
-  const startUrls = municipalities.map(
+  const startUrls = municipalities.slice(0,2).map(
     (municipality) => `${baseUrl}?selected_area=["${municipality}"]`
   );
 
