@@ -13,7 +13,8 @@ export async function startCronJobs() {
 
 (async () => {
   // run initial update
-  await runUpdate();
   startServer();
+  runUpdate();
+  
   // startCronJobs();
 })();
