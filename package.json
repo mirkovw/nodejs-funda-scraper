@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "start": "npx tsc && node dist/index.js",
-    "build:client": "npm run build --prefix client"
+    "build:client": "npm run build --prefix client",
+    "server": "nodemon",
+    "client": "npm start --prefix client",
+    "dev": "concurrently \"npm run server\" \"npm run client\""
   },
   "keywords": [],
   "author": "",
@@ -35,6 +38,9 @@
     "@types/localtunnel": "^2.0.4",
     "@types/lodash.isequal": "^4.5.8",
     "@types/node-cron": "^3.0.11",
-    "@types/papaparse": "^5.3.14"
+    "@types/papaparse": "^5.3.14",
+    "concurrently": "^9.2.0",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2"
   }
 }
